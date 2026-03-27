@@ -55,12 +55,12 @@
                 <svg id="upload-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 <span id="upload-text">Upload .DOCX</span>
             </button>
-            <input type="file" id="file-input" accept=".docx" class="hidden" />
+            <input type="file" id="file-input" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden" />
             <p id="upload-error" class="text-red-500 text-xs mt-2 hidden items-start gap-1"></p>
         </div>
 
         <div class="flex-1 overflow-y-auto p-2">
-            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Your Documents</h3>
+            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Public Workspace</h3>
             <div id="doc-list" class="space-y-1">
                 <!-- Documents will be injected here -->
                 <div class="text-center p-4 text-slate-400 text-sm">
@@ -70,8 +70,8 @@
         </div>
         
         <div class="p-4 border-t border-slate-200 text-xs text-slate-500 flex items-center gap-2">
-            <div id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500"></div>
-            <span id="status-text">Connecting to Firebase...</span>
+            <div id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500 shrink-0"></div>
+            <span id="status-text" class="truncate">Connecting to Firebase...</span>
         </div>
     </div>
 
@@ -79,7 +79,7 @@
     <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
         
         <!-- Mobile Header -->
-        <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0">
+        <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0 shadow-sm">
             <button onclick="toggleSidebar()" class="text-slate-600">
                 <!-- Menu Icon -->
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -120,7 +120,7 @@
             </div>
             <h2 class="text-2xl font-bold text-slate-800 mb-2">Read Word Documents Online</h2>
             <p class="text-slate-500 max-w-md mb-8">
-                Upload a `.docx` file from the sidebar to view its contents right here. You can easily copy the extracted text to your clipboard.
+                Upload a `.docx` file from the sidebar to view its contents right here. This is a public workspace, so uploaded files are shared.
             </p>
             <button onclick="document.getElementById('file-input').click()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -151,6 +151,10 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
+        // Define the SHARED PUBLIC folder path so all devices see the same files
+        const APP_ID = 'exam99-b7bab-app';
+        const PUBLIC_COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'documents'];
+
         // Application State
         let currentUser = null;
         let allDocuments = [];
@@ -168,7 +172,7 @@
         const emptyState = document.getElementById('empty-state');
         const viewerContainer = document.getElementById('viewer-container');
         
-        // 1. Authenticate User Anonymously
+        // 1. Authenticate User (Required by Firebase before reading data)
         signInAnonymously(auth).catch((error) => {
             console.error("Auth error:", error);
             statusText.innerText = "Connection failed";
@@ -178,27 +182,43 @@
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
-                statusText.innerText = "Connected to exam99-b7bab";
-                statusDot.classList.replace('bg-yellow-500', 'bg-green-500');
+                statusText.innerText = "Connected! Fetching docs...";
+                statusDot.classList.replace('bg-yellow-500', 'bg-blue-500');
                 loadDocuments();
             }
         });
 
-        // 2. Load Documents from Firestore
+        // 2. Load Documents from PUBLIC Workspace
         function loadDocuments() {
             if (!currentUser) return;
-            const docsRef = collection(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents');
             
+            const docsRef = collection(db, ...PUBLIC_COLLECTION_PATH);
+            
+            // The third parameter catches Firebase Permission Errors!
             onSnapshot(docsRef, (snapshot) => {
                 allDocuments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 // Sort by newest first
                 allDocuments.sort((a, b) => b.createdAt - a.createdAt);
+                
+                statusText.innerText = `Connected (${allDocuments.length} files)`;
+                statusDot.classList.replace('bg-blue-500', 'bg-green-500');
+                
                 renderDocumentList();
                 
-                // If active doc was deleted, reset view
+                // If active doc was deleted remotely, reset view
                 if (activeDocId && !allDocuments.find(d => d.id === activeDocId)) {
                     viewDocument(null);
                 }
+            }, (error) => {
+                console.error("Firestore read error:", error);
+                statusText.innerText = "Database Access Denied";
+                statusDot.classList.replace('bg-blue-500', 'bg-red-500');
+                docListEl.innerHTML = `
+                    <div class="m-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-xs">
+                        <strong>Error:</strong> Cannot read from Firebase.<br/><br/>
+                        Make sure your Firestore Database Security Rules allow reads and writes.
+                    </div>
+                `;
             });
         }
 
@@ -234,7 +254,7 @@
             });
         }
 
-        // 4. Handle File Upload
+        // 4. Handle File Upload (Saving to PUBLIC Workspace)
         fileInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -259,20 +279,23 @@
                         // Extract RAW text for clean copying
                         const textResult = await window.mammoth.extractRawText({ arrayBuffer });
 
-                        const docsRef = collection(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents');
+                        const docsRef = collection(db, ...PUBLIC_COLLECTION_PATH);
+                        
                         const newDocRef = await addDoc(docsRef, {
                             title: file.name,
                             htmlContent: htmlResult.value || '<p><i>Document is empty or contains no readable text.</i></p>',
                             textContent: textResult.value,
                             createdAt: Date.now(),
-                            size: file.size
+                            size: file.size,
+                            uploadedBy: currentUser.uid // Track who uploaded it
                         });
 
                         viewDocument(newDocRef.id);
                         fileInput.value = '';
                         closeSidebar();
                     } catch (err) {
-                        showError("Failed to read the document. It might be corrupted.");
+                        console.error("Upload error", err);
+                        showError("Firebase rejected upload. Check your database rules!");
                     } finally {
                         resetUploadBtn();
                     }
@@ -324,10 +347,11 @@
             e.stopPropagation();
             if (!currentUser) return;
             try {
-                await deleteDoc(doc(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents', id));
+                await deleteDoc(doc(db, ...PUBLIC_COLLECTION_PATH, id));
                 if (activeDocId === id) viewDocument(null);
             } catch (err) {
                 console.error("Error deleting:", err);
+                alert("Failed to delete. Check Firebase rules.");
             }
         };
 
@@ -389,4 +413,5 @@
     </script>
 </body>
 </html>
+
 
