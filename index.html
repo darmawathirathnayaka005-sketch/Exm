@@ -1,425 +1,392 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Upload, 
-  FileText, 
-  Copy, 
-  Check, 
-  Trash2, 
-  AlertCircle,
-  File,
-  ChevronRight,
-  Menu,
-  X
-} from 'lucide-react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-
-// --- Firebase Initialization ---
-// We initialize outside the component to prevent re-initialization on renders.
-let app, auth, db;
-try {
-  // Use the environment config if testing here, otherwise fallback to YOUR specific config for Netlify
-  const firebaseConfig = typeof __firebase_config !== 'undefined' 
-    ? JSON.parse(__firebase_config) 
-    : {
-        apiKey: "AIzaSyDxw4fH_qSG9rLAZj4mG_bpofu2WP68dTg",
-        authDomain: "exam99-b7bab.firebaseapp.com",
-        projectId: "exam99-b7bab",
-        storageBucket: "exam99-b7bab.firebasestorage.app",
-        messagingSenderId: "571884714360",
-        appId: "1:571884714360:web:37d85a753a9bbd5a5ab08d"
-      };
-  
-  if (Object.keys(firebaseConfig).length > 0) {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  }
-} catch (error) {
-  console.error("Error initializing Firebase:", error);
-}
-
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'exam99-b7bab-app';
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [documents, setDocuments] = useState([]);
-  const [selectedDoc, setSelectedDoc] = useState(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-  const [mammothLoaded, setMammothLoaded] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const fileInputRef = useRef(null);
-
-  // 1. Load Mammoth.js for parsing .docx files
-  useEffect(() => {
-    if (window.mammoth) {
-      setMammothLoaded(true);
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
-    script.onload = () => setMammothLoaded(true);
-    script.onerror = () => console.error("Failed to load Mammoth.js");
-    document.body.appendChild(script);
-  }, []);
-
-  // 2. Initialize Firebase Auth
-  useEffect(() => {
-    if (!auth) return;
-
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          // This will sign in the user anonymously when deployed on your domain
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth error:", err);
-      }
-    };
-
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // 3. Fetch Documents from Firestore
-  useEffect(() => {
-    if (!user || !db) return;
-
-    const docsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'documents');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocReader App</title>
     
-    // We fetch all documents and sort them in memory
-    const unsubscribe = onSnapshot(docsRef, 
-      (snapshot) => {
-        const docsData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        
-        // Sort descending by creation date in memory
-        docsData.sort((a, b) => b.createdAt - a.createdAt);
-        setDocuments(docsData);
-      },
-      (error) => {
-        console.error("Error fetching documents:", error);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // Handle File Upload and Parsing
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    // Reset states
-    setUploadError('');
-    setIsUploading(true);
-
-    // Validate file type
-    if (!file.name.toLowerCase().endsWith('.docx')) {
-      setUploadError('Please upload a valid Word Document (.docx)');
-      setIsUploading(false);
-      return;
-    }
-
-    if (!mammothLoaded) {
-      setUploadError('Document parser is still loading. Please try again in a moment.');
-      setIsUploading(false);
-      return;
-    }
-
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const arrayBuffer = e.target.result;
-        
-        try {
-          // Extract formatted HTML for viewing
-          const htmlResult = await window.mammoth.convertToHtml({ arrayBuffer });
-          // Extract raw text for clean copying
-          const textResult = await window.mammoth.extractRawText({ arrayBuffer });
-
-          if (!user || !db) throw new Error("Database connection not ready.");
-
-          // Save to Firestore
-          const docsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'documents');
-          const newDocRef = await addDoc(docsRef, {
-            title: file.name,
-            htmlContent: htmlResult.value || '<p><i>Document is empty or contains no readable text.</i></p>',
-            textContent: textResult.value,
-            createdAt: Date.now(),
-            size: file.size
-          });
-
-          // Auto-select the newly uploaded document
-          setSelectedDoc({
-            id: newDocRef.id,
-            title: file.name,
-            htmlContent: htmlResult.value,
-            textContent: textResult.value,
-            createdAt: Date.now()
-          });
-          
-          if (fileInputRef.current) fileInputRef.current.value = '';
-          setSidebarOpen(false); // Close sidebar on mobile after upload
-
-        } catch (parseError) {
-          console.error("Parse Error:", parseError);
-          setUploadError('Failed to read the document. It might be corrupted or password protected.');
-        } finally {
-          setIsUploading(false);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    } catch (err) {
-      console.error(err);
-      setUploadError('An unexpected error occurred during upload.');
-      setIsUploading(false);
-    }
-  };
-
-  // Copy to Clipboard
-  const handleCopy = () => {
-    if (!selectedDoc) return;
-
-    const textArea = document.createElement("textarea");
-    textArea.value = selectedDoc.textContent;
-    // Move outside of screen to make it invisible
-    textArea.style.position = "absolute";
-    textArea.style.left = "-999999px";
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-
-    try {
-      document.execCommand('copy');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Unable to copy', err);
-      alert('Failed to copy text. Your browser might block this action.');
-    } finally {
-      document.body.removeChild(textArea);
-    }
-  };
-
-  // Delete Document
-  const handleDelete = async (docId, e) => {
-    e.stopPropagation(); // Prevent selecting the doc when clicking delete
-    if (!user || !db) return;
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
     
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'documents', docId));
-      if (selectedDoc?.id === docId) {
-        setSelectedDoc(null);
-      }
-    } catch (error) {
-      console.error("Error deleting document:", error);
-    }
-  };
+    <!-- Mammoth.js for processing Word Documents -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 
-  const formatDate = (timestamp) => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric'
-    });
-  };
-
-  // UI Components
-  return (
-    <div className="flex h-screen w-full bg-slate-50 text-slate-800 font-sans overflow-hidden">
-      
-      {/* Mobile Sidebar Overlay */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/20 z-20 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <div className={`
-        fixed md:static inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-      `}>
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl">
-            <FileText className="w-6 h-6" />
-            <span>DocReader</span>
-          </div>
-          <button className="md:hidden text-slate-400 hover:text-slate-600" onClick={() => setSidebarOpen(false)}>
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-4">
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading || !mammothLoaded}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-          >
-            {isUploading ? (
-              <div className="animate-spin rounded-full h-5 w-5 border-2 border-white/30 border-t-white" />
-            ) : (
-              <Upload className="w-4 h-4" />
-            )}
-            {isUploading ? 'Processing...' : 'Upload .DOCX'}
-          </button>
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
-            className="hidden" 
-          />
-          {uploadError && (
-            <p className="text-red-500 text-xs mt-2 flex items-start gap-1">
-              <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-              <span>{uploadError}</span>
-            </p>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-2">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Your Documents</h3>
-          
-          {documents.length === 0 ? (
-            <div className="text-center p-4 text-slate-400 text-sm">
-              <File className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>No documents uploaded yet.</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {documents.map((doc) => (
-                <div 
-                  key={doc.id}
-                  onClick={() => { setSelectedDoc(doc); setSidebarOpen(false); }}
-                  className={`
-                    w-full text-left px-3 py-3 rounded-lg flex items-center group cursor-pointer transition-colors
-                    ${selectedDoc?.id === doc.id ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100 text-slate-700'}
-                  `}
-                >
-                  <FileText className={`w-5 h-5 mr-3 shrink-0 ${selectedDoc?.id === doc.id ? 'text-indigo-500' : 'text-slate-400'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{doc.title}</p>
-                    <p className="text-xs opacity-70 truncate">{formatDate(doc.createdAt)}</p>
-                  </div>
-                  <button 
-                    onClick={(e) => handleDelete(doc.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all shrink-0 ml-1"
-                    title="Delete document"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+    <style>
+        /* Custom formatting for the Word Document content */
+        .document-content p { margin-bottom: 1rem; line-height: 1.625; color: #334155; }
+        .document-content h1 { font-size: 1.875rem; font-weight: 700; margin-bottom: 1.5rem; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .document-content h2 { font-size: 1.5rem; font-weight: 600; margin-top: 2rem; margin-bottom: 1rem; color: #1e293b; }
+        .document-content h3 { font-size: 1.25rem; font-weight: 500; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #1e293b; }
+        .document-content ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .document-content ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .document-content li { margin-bottom: 0.25rem; color: #334155; }
+        .document-content table { width: 100%; margin-bottom: 1.5rem; border-collapse: collapse; border: 1px solid #cbd5e1; }
+        .document-content td, .document-content th { border: 1px solid #cbd5e1; padding: 0.5rem; }
         
-        {/* User Status */}
-        <div className="p-4 border-t border-slate-200 text-xs text-slate-500 flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500"></div>
-          {user ? 'Connected to exam99-b7bab' : 'Connecting...'}
-        </div>
-      </div>
+        /* Hide scrollbar for a cleaner look */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans overflow-hidden flex h-screen w-full">
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
-        
-        {/* Mobile Header */}
-        <div className="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0">
-          <button onClick={() => setSidebarOpen(true)} className="text-slate-600">
-            <Menu className="w-6 h-6" />
-          </button>
-          <span className="font-semibold text-slate-800 truncate px-4">
-            {selectedDoc ? selectedDoc.title : 'DocReader'}
-          </span>
-          <div className="w-6"></div> {/* Spacer for balance */}
-        </div>
+    <!-- Mobile Sidebar Overlay -->
+    <div id="mobile-overlay" class="fixed inset-0 bg-black/20 z-20 hidden md:hidden" onclick="toggleSidebar()"></div>
 
-        {selectedDoc ? (
-          <>
-            {/* Top Toolbar */}
-            <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
-              <div className="min-w-0 hidden md:block">
-                <h2 className="text-lg font-semibold text-slate-800 truncate flex items-center gap-2">
-                  {selectedDoc.title}
-                </h2>
-                <p className="text-xs text-slate-500">Uploaded {formatDate(selectedDoc.createdAt)}</p>
-              </div>
-              
-              <button 
-                onClick={handleCopy}
-                className={`
-                  flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto
-                  ${copied 
-                    ? 'bg-green-100 text-green-700 border border-green-200' 
-                    : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm'
-                  }
-                `}
-              >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                {copied ? 'Copied to Clipboard' : 'Copy Text'}
-              </button>
+    <!-- Sidebar -->
+    <div id="sidebar" class="fixed md:static inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out -translate-x-full md:translate-x-0">
+        <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center gap-2 text-indigo-600 font-bold text-xl">
+                <!-- FileText Icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>DocReader</span>
             </div>
-
-            {/* Document Viewer Pane */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
-              <div className="max-w-4xl mx-auto bg-white border border-slate-200 shadow-sm rounded-xl p-6 sm:p-12 min-h-full">
-                
-                {/* Custom styling for the raw HTML injected by mammoth.js */}
-                <div 
-                  className="
-                    document-content
-                    [&>p]:mb-4 [&>p]:leading-relaxed [&>p]:text-slate-700
-                    [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-6 [&>h1]:text-slate-900 [&>h1]:border-b [&>h1]:pb-2
-                    [&>h2]:text-2xl [&>h2]:font-semibold [&>h2]:mt-8 [&>h2]:mb-4 [&>h2]:text-slate-800
-                    [&>h3]:text-xl [&>h3]:font-medium [&>h3]:mt-6 [&>h3]:mb-3 [&>h3]:text-slate-800
-                    [&>ul]:list-disc [&>ul]:pl-6 [&>ul]:mb-4 [&>ul>li]:mb-1 [&>ul>li]:text-slate-700
-                    [&>ol]:list-decimal [&>ol]:pl-6 [&>ol]:mb-4 [&>ol>li]:mb-1 [&>ol>li]:text-slate-700
-                    [&>table]:w-full [&>table]:mb-6 [&>table]:border-collapse [&>table]:border [&>table]:border-slate-300
-                    [&>table>tbody>tr>td]:border [&>table>tbody>tr>td]:border-slate-300 [&>table>tbody>tr>td]:p-2
-                  "
-                  dangerouslySetInnerHTML={{ __html: selectedDoc.htmlContent }}
-                />
-              </div>
-            </div>
-          </>
-        ) : (
-          /* Empty State */
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50/50">
-            <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
-              <FileText className="w-10 h-10 text-indigo-400" />
-            </div>
-            <h2 className="text-2xl font-bold text-slate-800 mb-2">Read Word Documents Online</h2>
-            <p className="text-slate-500 max-w-md mb-8">
-              Upload a `.docx` file from the sidebar to view its contents right here. You can easily copy the extracted text to your clipboard.
-            </p>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors"
-            >
-              <Upload className="w-5 h-5" />
-              Upload a Document
+            <button class="md:hidden text-slate-400 hover:text-slate-600" onclick="toggleSidebar()">
+                <!-- X Icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
-          </div>
-        )}
+        </div>
 
-      </div>
+        <div class="p-4">
+            <button id="upload-btn" onclick="document.getElementById('file-input').click()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                <!-- Upload Icon -->
+                <svg id="upload-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span id="upload-text">Upload .DOCX</span>
+            </button>
+            <input type="file" id="file-input" accept=".docx" class="hidden" />
+            <p id="upload-error" class="text-red-500 text-xs mt-2 hidden items-start gap-1"></p>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-2">
+            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Your Documents</h3>
+            <div id="doc-list" class="space-y-1">
+                <!-- Documents will be injected here -->
+                <div class="text-center p-4 text-slate-400 text-sm">
+                    <p>Loading documents...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="p-4 border-t border-slate-200 text-xs text-slate-500 flex items-center gap-2">
+            <div id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500"></div>
+            <span id="status-text">Connecting to Firebase...</span>
+        </div>
     </div>
-  );
-}
 
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
+        
+        <!-- Mobile Header -->
+        <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0">
+            <button onclick="toggleSidebar()" class="text-slate-600">
+                <!-- Menu Icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <span id="mobile-title" class="font-semibold text-slate-800 truncate px-4">DocReader</span>
+            <div class="w-6"></div>
+        </div>
+
+        <!-- Viewer Container -->
+        <div id="viewer-container" class="hidden flex-col h-full w-full">
+            <!-- Top Toolbar -->
+            <div class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
+                <div class="min-w-0 hidden md:block">
+                    <h2 id="doc-title" class="text-lg font-semibold text-slate-800 truncate">Document Title</h2>
+                    <p id="doc-date" class="text-xs text-slate-500">Uploaded Date</p>
+                </div>
+                
+                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm">
+                    <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <span id="copy-text">Copy Text</span>
+                </button>
+            </div>
+
+            <!-- Document Viewer Pane -->
+            <div class="flex-1 overflow-y-auto p-4 sm:p-8 relative">
+                <div class="max-w-4xl mx-auto bg-white border border-slate-200 shadow-sm rounded-xl p-6 sm:p-12 min-h-full">
+                    <div id="doc-content" class="document-content">
+                        <!-- Content injected here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50/50">
+            <div class="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-400"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </div>
+            <h2 class="text-2xl font-bold text-slate-800 mb-2">Read Word Documents Online</h2>
+            <p class="text-slate-500 max-w-md mb-8">
+                Upload a `.docx` file from the sidebar to view its contents right here. You can easily copy the extracted text to your clipboard.
+            </p>
+            <button onclick="document.getElementById('file-input').click()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload a Document
+            </button>
+        </div>
+    </div>
+
+    <!-- Application Logic -->
+    <script type="module">
+        // Import standard Firebase SDKs directly via browser modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        // Your Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDxw4fH_qSG9rLAZj4mG_bpofu2WP68dTg",
+            authDomain: "exam99-b7bab.firebaseapp.com",
+            projectId: "exam99-b7bab",
+            storageBucket: "exam99-b7bab.firebasestorage.app",
+            messagingSenderId: "571884714360",
+            appId: "1:571884714360:web:37d85a753a9bbd5a5ab08d"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Application State
+        let currentUser = null;
+        let allDocuments = [];
+        let activeDocId = null;
+
+        // Elements
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const docListEl = document.getElementById('doc-list');
+        const fileInput = document.getElementById('file-input');
+        const uploadBtn = document.getElementById('upload-btn');
+        const uploadText = document.getElementById('upload-text');
+        const uploadError = document.getElementById('upload-error');
+        
+        const emptyState = document.getElementById('empty-state');
+        const viewerContainer = document.getElementById('viewer-container');
+        
+        // 1. Authenticate User Anonymously
+        signInAnonymously(auth).catch((error) => {
+            console.error("Auth error:", error);
+            statusText.innerText = "Connection failed";
+            statusDot.classList.replace('bg-yellow-500', 'bg-red-500');
+        });
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                statusText.innerText = "Connected to exam99-b7bab";
+                statusDot.classList.replace('bg-yellow-500', 'bg-green-500');
+                loadDocuments();
+            }
+        });
+
+        // 2. Load Documents from Firestore
+        function loadDocuments() {
+            if (!currentUser) return;
+            const docsRef = collection(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents');
+            
+            onSnapshot(docsRef, (snapshot) => {
+                allDocuments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Sort by newest first
+                allDocuments.sort((a, b) => b.createdAt - a.createdAt);
+                renderDocumentList();
+                
+                // If active doc was deleted, reset view
+                if (activeDocId && !allDocuments.find(d => d.id === activeDocId)) {
+                    viewDocument(null);
+                }
+            });
+        }
+
+        // 3. Render List in Sidebar
+        function renderDocumentList() {
+            if (allDocuments.length === 0) {
+                docListEl.innerHTML = `
+                    <div class="text-center p-4 text-slate-400 text-sm">
+                        <p>No documents uploaded yet.</p>
+                    </div>`;
+                return;
+            }
+
+            docListEl.innerHTML = '';
+            allDocuments.forEach(docData => {
+                const date = new Date(docData.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const isSelected = docData.id === activeDocId;
+                
+                const div = document.createElement('div');
+                div.className = `w-full text-left px-3 py-3 rounded-lg flex items-center group cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100 text-slate-700'}`;
+                
+                div.innerHTML = `
+                    <svg class="w-5 h-5 mr-3 shrink-0 ${isSelected ? 'text-indigo-500' : 'text-slate-400'}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <div class="flex-1 min-w-0" onclick="window.viewDocument('${docData.id}')">
+                        <p class="text-sm font-medium truncate">${docData.title}</p>
+                        <p class="text-xs opacity-70 truncate">${date}</p>
+                    </div>
+                    <button onclick="window.deleteDocument('${docData.id}', event)" class="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all shrink-0 ml-1" title="Delete document">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    </button>
+                `;
+                docListEl.appendChild(div);
+            });
+        }
+
+        // 4. Handle File Upload
+        fileInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            uploadError.classList.add('hidden');
+            uploadText.innerText = "Processing...";
+            uploadBtn.disabled = true;
+
+            if (!file.name.toLowerCase().endsWith('.docx')) {
+                showError("Please upload a valid Word Document (.docx)");
+                resetUploadBtn();
+                return;
+            }
+
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const arrayBuffer = e.target.result;
+                    try {
+                        // Extract HTML for UI
+                        const htmlResult = await window.mammoth.convertToHtml({ arrayBuffer });
+                        // Extract RAW text for clean copying
+                        const textResult = await window.mammoth.extractRawText({ arrayBuffer });
+
+                        const docsRef = collection(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents');
+                        const newDocRef = await addDoc(docsRef, {
+                            title: file.name,
+                            htmlContent: htmlResult.value || '<p><i>Document is empty or contains no readable text.</i></p>',
+                            textContent: textResult.value,
+                            createdAt: Date.now(),
+                            size: file.size
+                        });
+
+                        viewDocument(newDocRef.id);
+                        fileInput.value = '';
+                        closeSidebar();
+                    } catch (err) {
+                        showError("Failed to read the document. It might be corrupted.");
+                    } finally {
+                        resetUploadBtn();
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } catch (error) {
+                showError("An unexpected error occurred.");
+                resetUploadBtn();
+            }
+        });
+
+        function showError(msg) {
+            uploadError.innerText = msg;
+            uploadError.classList.remove('hidden');
+            uploadError.classList.add('flex');
+        }
+
+        function resetUploadBtn() {
+            uploadText.innerText = "Upload .DOCX";
+            uploadBtn.disabled = false;
+        }
+
+        // 5. View Document Logic
+        window.viewDocument = (id) => {
+            activeDocId = id;
+            if (!id) {
+                emptyState.classList.remove('hidden');
+                viewerContainer.classList.add('hidden');
+                document.getElementById('mobile-title').innerText = "DocReader";
+            } else {
+                const docData = allDocuments.find(d => d.id === id);
+                if (docData) {
+                    emptyState.classList.add('hidden');
+                    viewerContainer.classList.remove('hidden');
+                    viewerContainer.classList.add('flex');
+                    
+                    document.getElementById('doc-title').innerText = docData.title;
+                    document.getElementById('mobile-title').innerText = docData.title;
+                    document.getElementById('doc-date').innerText = "Uploaded " + new Date(docData.createdAt).toLocaleDateString();
+                    document.getElementById('doc-content').innerHTML = docData.htmlContent;
+                    closeSidebar();
+                }
+            }
+            renderDocumentList(); // Update selected styling
+        };
+
+        // 6. Delete Logic
+        window.deleteDocument = async (id, e) => {
+            e.stopPropagation();
+            if (!currentUser) return;
+            try {
+                await deleteDoc(doc(db, 'artifacts', 'exam99-b7bab-app', 'users', currentUser.uid, 'documents', id));
+                if (activeDocId === id) viewDocument(null);
+            } catch (err) {
+                console.error("Error deleting:", err);
+            }
+        };
+
+        // 7. Copy Text Logic
+        window.copyDocumentText = () => {
+            const docData = allDocuments.find(d => d.id === activeDocId);
+            if (!docData) return;
+
+            const textArea = document.createElement("textarea");
+            textArea.value = docData.textContent;
+            textArea.style.position = "absolute";
+            textArea.style.left = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+
+            try {
+                document.execCommand('copy');
+                
+                // UI feedback
+                const btn = document.getElementById('copy-btn');
+                const text = document.getElementById('copy-text');
+                btn.classList.add('bg-green-100', 'text-green-700', 'border-green-200');
+                btn.classList.remove('bg-white', 'text-slate-700', 'border-slate-300');
+                text.innerText = "Copied!";
+                
+                setTimeout(() => {
+                    btn.classList.remove('bg-green-100', 'text-green-700', 'border-green-200');
+                    btn.classList.add('bg-white', 'text-slate-700', 'border-slate-300');
+                    text.innerText = "Copy Text";
+                }, 2000);
+
+            } catch (err) {
+                alert('Failed to copy text. Your browser might block this action.');
+            } finally {
+                document.body.removeChild(textArea);
+            }
+        };
+
+        // 8. Mobile Sidebar Controls
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('mobile-overlay');
+
+        window.toggleSidebar = () => {
+            const isOpen = !sidebar.classList.contains('-translate-x-full');
+            if (isOpen) {
+                closeSidebar();
+            } else {
+                sidebar.classList.remove('-translate-x-full');
+                overlay.classList.remove('hidden');
+            }
+        };
+
+        function closeSidebar() {
+            sidebar.classList.add('-translate-x-full');
+            overlay.classList.add('hidden');
+        }
+
+    </script>
+</body>
+</html>
 
