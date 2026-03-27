@@ -1,0 +1,425 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Upload, 
+  FileText, 
+  Copy, 
+  Check, 
+  Trash2, 
+  AlertCircle,
+  File,
+  ChevronRight,
+  Menu,
+  X
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+
+// --- Firebase Initialization ---
+// We initialize outside the component to prevent re-initialization on renders.
+let app, auth, db;
+try {
+  // Use the environment config if testing here, otherwise fallback to YOUR specific config for Netlify
+  const firebaseConfig = typeof __firebase_config !== 'undefined' 
+    ? JSON.parse(__firebase_config) 
+    : {
+        apiKey: "AIzaSyDxw4fH_qSG9rLAZj4mG_bpofu2WP68dTg",
+        authDomain: "exam99-b7bab.firebaseapp.com",
+        projectId: "exam99-b7bab",
+        storageBucket: "exam99-b7bab.firebasestorage.app",
+        messagingSenderId: "571884714360",
+        appId: "1:571884714360:web:37d85a753a9bbd5a5ab08d"
+      };
+  
+  if (Object.keys(firebaseConfig).length > 0) {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  }
+} catch (error) {
+  console.error("Error initializing Firebase:", error);
+}
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'exam99-b7bab-app';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [selectedDoc, setSelectedDoc] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [mammothLoaded, setMammothLoaded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // 1. Load Mammoth.js for parsing .docx files
+  useEffect(() => {
+    if (window.mammoth) {
+      setMammothLoaded(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+    script.onload = () => setMammothLoaded(true);
+    script.onerror = () => console.error("Failed to load Mammoth.js");
+    document.body.appendChild(script);
+  }, []);
+
+  // 2. Initialize Firebase Auth
+  useEffect(() => {
+    if (!auth) return;
+
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          // This will sign in the user anonymously when deployed on your domain
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error:", err);
+      }
+    };
+
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 3. Fetch Documents from Firestore
+  useEffect(() => {
+    if (!user || !db) return;
+
+    const docsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'documents');
+    
+    // We fetch all documents and sort them in memory
+    const unsubscribe = onSnapshot(docsRef, 
+      (snapshot) => {
+        const docsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        // Sort descending by creation date in memory
+        docsData.sort((a, b) => b.createdAt - a.createdAt);
+        setDocuments(docsData);
+      },
+      (error) => {
+        console.error("Error fetching documents:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Handle File Upload and Parsing
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Reset states
+    setUploadError('');
+    setIsUploading(true);
+
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.docx')) {
+      setUploadError('Please upload a valid Word Document (.docx)');
+      setIsUploading(false);
+      return;
+    }
+
+    if (!mammothLoaded) {
+      setUploadError('Document parser is still loading. Please try again in a moment.');
+      setIsUploading(false);
+      return;
+    }
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const arrayBuffer = e.target.result;
+        
+        try {
+          // Extract formatted HTML for viewing
+          const htmlResult = await window.mammoth.convertToHtml({ arrayBuffer });
+          // Extract raw text for clean copying
+          const textResult = await window.mammoth.extractRawText({ arrayBuffer });
+
+          if (!user || !db) throw new Error("Database connection not ready.");
+
+          // Save to Firestore
+          const docsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'documents');
+          const newDocRef = await addDoc(docsRef, {
+            title: file.name,
+            htmlContent: htmlResult.value || '<p><i>Document is empty or contains no readable text.</i></p>',
+            textContent: textResult.value,
+            createdAt: Date.now(),
+            size: file.size
+          });
+
+          // Auto-select the newly uploaded document
+          setSelectedDoc({
+            id: newDocRef.id,
+            title: file.name,
+            htmlContent: htmlResult.value,
+            textContent: textResult.value,
+            createdAt: Date.now()
+          });
+          
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          setSidebarOpen(false); // Close sidebar on mobile after upload
+
+        } catch (parseError) {
+          console.error("Parse Error:", parseError);
+          setUploadError('Failed to read the document. It might be corrupted or password protected.');
+        } finally {
+          setIsUploading(false);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      console.error(err);
+      setUploadError('An unexpected error occurred during upload.');
+      setIsUploading(false);
+    }
+  };
+
+  // Copy to Clipboard
+  const handleCopy = () => {
+    if (!selectedDoc) return;
+
+    const textArea = document.createElement("textarea");
+    textArea.value = selectedDoc.textContent;
+    // Move outside of screen to make it invisible
+    textArea.style.position = "absolute";
+    textArea.style.left = "-999999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    try {
+      document.execCommand('copy');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Unable to copy', err);
+      alert('Failed to copy text. Your browser might block this action.');
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // Delete Document
+  const handleDelete = async (docId, e) => {
+    e.stopPropagation(); // Prevent selecting the doc when clicking delete
+    if (!user || !db) return;
+    
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'documents', docId));
+      if (selectedDoc?.id === docId) {
+        setSelectedDoc(null);
+      }
+    } catch (error) {
+      console.error("Error deleting document:", error);
+    }
+  };
+
+  const formatDate = (timestamp) => {
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric'
+    });
+  };
+
+  // UI Components
+  return (
+    <div className="flex h-screen w-full bg-slate-50 text-slate-800 font-sans overflow-hidden">
+      
+      {/* Mobile Sidebar Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/20 z-20 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div className={`
+        fixed md:static inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl">
+            <FileText className="w-6 h-6" />
+            <span>DocReader</span>
+          </div>
+          <button className="md:hidden text-slate-400 hover:text-slate-600" onClick={() => setSidebarOpen(false)}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4">
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading || !mammothLoaded}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isUploading ? (
+              <div className="animate-spin rounded-full h-5 w-5 border-2 border-white/30 border-t-white" />
+            ) : (
+              <Upload className="w-4 h-4" />
+            )}
+            {isUploading ? 'Processing...' : 'Upload .DOCX'}
+          </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
+            className="hidden" 
+          />
+          {uploadError && (
+            <p className="text-red-500 text-xs mt-2 flex items-start gap-1">
+              <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+              <span>{uploadError}</span>
+            </p>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Your Documents</h3>
+          
+          {documents.length === 0 ? (
+            <div className="text-center p-4 text-slate-400 text-sm">
+              <File className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>No documents uploaded yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {documents.map((doc) => (
+                <div 
+                  key={doc.id}
+                  onClick={() => { setSelectedDoc(doc); setSidebarOpen(false); }}
+                  className={`
+                    w-full text-left px-3 py-3 rounded-lg flex items-center group cursor-pointer transition-colors
+                    ${selectedDoc?.id === doc.id ? 'bg-indigo-50 text-indigo-700' : 'hover:bg-slate-100 text-slate-700'}
+                  `}
+                >
+                  <FileText className={`w-5 h-5 mr-3 shrink-0 ${selectedDoc?.id === doc.id ? 'text-indigo-500' : 'text-slate-400'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{doc.title}</p>
+                    <p className="text-xs opacity-70 truncate">{formatDate(doc.createdAt)}</p>
+                  </div>
+                  <button 
+                    onClick={(e) => handleDelete(doc.id, e)}
+                    className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all shrink-0 ml-1"
+                    title="Delete document"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        {/* User Status */}
+        <div className="p-4 border-t border-slate-200 text-xs text-slate-500 flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-green-500"></div>
+          {user ? 'Connected to exam99-b7bab' : 'Connecting...'}
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
+        
+        {/* Mobile Header */}
+        <div className="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0">
+          <button onClick={() => setSidebarOpen(true)} className="text-slate-600">
+            <Menu className="w-6 h-6" />
+          </button>
+          <span className="font-semibold text-slate-800 truncate px-4">
+            {selectedDoc ? selectedDoc.title : 'DocReader'}
+          </span>
+          <div className="w-6"></div> {/* Spacer for balance */}
+        </div>
+
+        {selectedDoc ? (
+          <>
+            {/* Top Toolbar */}
+            <div className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
+              <div className="min-w-0 hidden md:block">
+                <h2 className="text-lg font-semibold text-slate-800 truncate flex items-center gap-2">
+                  {selectedDoc.title}
+                </h2>
+                <p className="text-xs text-slate-500">Uploaded {formatDate(selectedDoc.createdAt)}</p>
+              </div>
+              
+              <button 
+                onClick={handleCopy}
+                className={`
+                  flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto
+                  ${copied 
+                    ? 'bg-green-100 text-green-700 border border-green-200' 
+                    : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm'
+                  }
+                `}
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copied to Clipboard' : 'Copy Text'}
+              </button>
+            </div>
+
+            {/* Document Viewer Pane */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-8 relative">
+              <div className="max-w-4xl mx-auto bg-white border border-slate-200 shadow-sm rounded-xl p-6 sm:p-12 min-h-full">
+                
+                {/* Custom styling for the raw HTML injected by mammoth.js */}
+                <div 
+                  className="
+                    document-content
+                    [&>p]:mb-4 [&>p]:leading-relaxed [&>p]:text-slate-700
+                    [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-6 [&>h1]:text-slate-900 [&>h1]:border-b [&>h1]:pb-2
+                    [&>h2]:text-2xl [&>h2]:font-semibold [&>h2]:mt-8 [&>h2]:mb-4 [&>h2]:text-slate-800
+                    [&>h3]:text-xl [&>h3]:font-medium [&>h3]:mt-6 [&>h3]:mb-3 [&>h3]:text-slate-800
+                    [&>ul]:list-disc [&>ul]:pl-6 [&>ul]:mb-4 [&>ul>li]:mb-1 [&>ul>li]:text-slate-700
+                    [&>ol]:list-decimal [&>ol]:pl-6 [&>ol]:mb-4 [&>ol>li]:mb-1 [&>ol>li]:text-slate-700
+                    [&>table]:w-full [&>table]:mb-6 [&>table]:border-collapse [&>table]:border [&>table]:border-slate-300
+                    [&>table>tbody>tr>td]:border [&>table>tbody>tr>td]:border-slate-300 [&>table>tbody>tr>td]:p-2
+                  "
+                  dangerouslySetInnerHTML={{ __html: selectedDoc.htmlContent }}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          /* Empty State */
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50/50">
+            <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
+              <FileText className="w-10 h-10 text-indigo-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">Read Word Documents Online</h2>
+            <p className="text-slate-500 max-w-md mb-8">
+              Upload a `.docx` file from the sidebar to view its contents right here. You can easily copy the extracted text to your clipboard.
+            </p>
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors"
+            >
+              <Upload className="w-5 h-5" />
+              Upload a Document
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+
