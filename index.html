@@ -163,7 +163,7 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-        // Your Firebase Configuration (UPDATED)
+        // Your Firebase Configuration
         const firebaseConfig = {
             apiKey: "AIzaSyCDBmQCU9NvlGIWgFJvuiRIXVPlHQDpxfw",
             authDomain: "exm199-b8552.firebaseapp.com",
@@ -179,7 +179,7 @@
         const db = getFirestore(app);
 
         // Define the SHARED PUBLIC folder path so all devices see the same files
-        const APP_ID = 'exm199-b8552-app'; // Updated to match the new project ID
+        const APP_ID = 'exm199-b8552-app';
         const PUBLIC_COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'spreadsheets'];
 
         // Application State
@@ -221,7 +221,6 @@
             
             const docsRef = collection(db, ...PUBLIC_COLLECTION_PATH);
             
-            // The third parameter catches Firebase Permission Errors!
             onSnapshot(docsRef, (snapshot) => {
                 allDocuments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 // Sort by newest first
@@ -240,12 +239,6 @@
                 console.error("Firestore read error:", error);
                 statusText.innerText = "Database Access Denied";
                 statusDot.classList.replace('bg-blue-500', 'bg-red-500');
-                docListEl.innerHTML = `
-                    <div class="m-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-xs">
-                        <strong>Error:</strong> Cannot read from Firebase.<br/><br/>
-                        Make sure your Firestore Database Security Rules allow reads and writes.
-                    </div>
-                `;
             });
         }
 
@@ -281,7 +274,7 @@
             });
         }
 
-        // 4. Handle File Upload (Saving to PUBLIC Workspace) using SheetJS
+        // 4. Handle File Upload using SheetJS
         fileInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -305,20 +298,11 @@
                         
                         // Parse the workbook using SheetJS
                         const workbook = XLSX.read(data, { type: 'array' });
-                        
-                        // Get the first worksheet
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
                         
-                        // Convert sheet to an HTML table for viewing
+                        // Convert sheet to HTML table for viewing in the app
                         const htmlResult = XLSX.utils.sheet_to_html(worksheet);
-                        
-                        // Convert sheet to CSV string for clean copying/pasting
-                        const csvResult = XLSX.utils.sheet_to_csv(worksheet);
-
-                        if (!csvResult || csvResult.trim() === '') {
-                            throw new Error("Spreadsheet appears to be empty.");
-                        }
 
                         const docsRef = collection(db, ...PUBLIC_COLLECTION_PATH);
                         
@@ -326,7 +310,6 @@
                             title: file.name,
                             sheetName: firstSheetName,
                             htmlContent: htmlResult,
-                            textContent: csvResult, // Store the CSV version for clipboard
                             createdAt: Date.now(),
                             size: file.size,
                             uploadedBy: currentUser.uid
@@ -382,7 +365,7 @@
                     closeSidebar();
                 }
             }
-            renderDocumentList(); // Update selected styling
+            renderDocumentList();
         };
 
         // 6. Delete Logic
@@ -398,20 +381,27 @@
             }
         };
 
-        // 7. Copy Data Logic (Copies CSV format which pastes perfectly into other Excel/Sheets)
+        // 7. COPY DATA LOGIC (FIXED FOR EXCEL)
+        // Instead of copying raw text, this creates a browser selection 
+        // over the rendered HTML table. Excel natively understands HTML 
+        // clipboards and will perfectly parse columns and rows without commas!
         window.copyDocumentText = () => {
-            const docData = allDocuments.find(d => d.id === activeDocId);
-            if (!docData) return;
+            const docContent = document.getElementById('doc-content');
+            
+            // Safety check: is there a table to copy?
+            if (!docContent || docContent.innerHTML.trim() === '') return;
 
-            const textArea = document.createElement("textarea");
-            textArea.value = docData.textContent; // This contains the CSV format
-            textArea.style.position = "absolute";
-            textArea.style.left = "-999999px";
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
+            // Select the entire table element programmatically
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(docContent);
+            
+            // Clear old selections and apply ours
+            selection.removeAllRanges();
+            selection.addRange(range);
 
             try {
+                // Execute copy (Copies as Rich HTML table instead of plain text)
                 document.execCommand('copy');
                 
                 // UI feedback
@@ -430,7 +420,8 @@
             } catch (err) {
                 alert('Failed to copy data. Your browser might block this action.');
             } finally {
-                document.body.removeChild(textArea);
+                // Remove the blue highlighting from the screen after copying
+                selection.removeAllRanges();
             }
         };
 
