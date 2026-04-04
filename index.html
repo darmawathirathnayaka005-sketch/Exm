@@ -116,15 +116,23 @@
 
         <div id="viewer-container" class="hidden flex-col h-full w-full">
             <div class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
-                <div class="min-w-0 hidden md:block">
+                <div class="min-w-0 hidden md:block max-w-[40%]">
                     <h2 id="doc-title" class="text-lg font-semibold text-slate-800 truncate">Spreadsheet Title</h2>
                     <p id="doc-date" class="text-xs text-slate-500">Uploaded Date</p>
                 </div>
                 
-                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-emerald-600 text-white hover:bg-emerald-700 shadow-md active:scale-95">
-                    <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><line x1="9" y1="9" x2="10" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-                    <span id="copy-text">Select All & Copy</span>
-                </button>
+                <div class="flex items-center gap-2 ml-auto">
+                    <!-- NEW DOWNLOAD BUTTON -->
+                    <button id="download-btn" onclick="downloadExcel()" class="flex items-center gap-2 px-3 py-2 rounded-md font-medium text-sm transition-all bg-white text-emerald-700 border border-slate-300 hover:bg-slate-50 shadow-sm active:scale-95" title="Download Excel File">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span class="hidden sm:inline">Download</span>
+                    </button>
+
+                    <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-3 py-2 sm:px-4 rounded-md font-medium text-sm transition-all bg-emerald-600 text-white hover:bg-emerald-700 shadow-md active:scale-95">
+                        <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><line x1="9" y1="9" x2="10" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                        <span id="copy-text">Select All & Copy</span>
+                    </button>
+                </div>
             </div>
 
             <div class="flex-1 overflow-y-auto p-4 sm:p-8 relative">
@@ -151,7 +159,7 @@
             </div>
             <h2 class="text-2xl font-bold text-slate-800 mb-2">Read Excel Data Online</h2>
             <p class="text-slate-500 max-w-md mb-8">
-                Upload `.xlsx` files from the sidebar. <strong>Formulas are preserved!</strong> When you copy the data, pasting it into Excel will restore all your calculations.
+                Upload `.xlsx` files from the sidebar. <strong>Formulas are preserved!</strong> You can now Download the data straight to your device or Select & Copy to paste.
             </p>
             <button onclick="document.getElementById('file-input').click()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -266,7 +274,7 @@
             });
         }
 
-        // --- NEW: FORMULA EXTRACTION LOGIC ---
+        // --- UPLOAD LOGIC ---
         fileInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -293,23 +301,17 @@
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
                         
-                        // MAGIC TRICK: Loop through ALL cells. 
-                        // If a cell has a formula (cell.f), we overwrite its visible value 
-                        // to be "=[the formula]". 
+                        // Overwrite cells with formulas so they show exactly as "=SUM(...)"
                         for (const cellAddress in worksheet) {
-                            // Ignore hidden properties that start with !
                             if (cellAddress.startsWith('!')) continue; 
-                            
                             const cell = worksheet[cellAddress];
                             if (cell && cell.f) {
-                                // Extract the formula and prepend the = sign
                                 cell.v = "=" + cell.f;
-                                cell.t = "s"; // Mark it as a string
-                                delete cell.w; // Delete cached formatted text so it uses our new value
+                                cell.t = "s"; 
+                                delete cell.w; 
                             }
                         }
 
-                        // Now when we convert to HTML and TSV, the formulas are hardcoded into the output!
                         const htmlResult = XLSX.utils.sheet_to_html(worksheet);
                         const tsvResult = XLSX.utils.sheet_to_csv(worksheet, { FS: "\t" });
 
@@ -389,6 +391,34 @@
             }
         };
 
+        // --- DOWNLOAD LOGIC ---
+        window.downloadExcel = () => {
+            const docData = allDocuments.find(d => d.id === activeDocId);
+            if (!docData) return;
+
+            const table = document.querySelector('.excel-viewer table');
+            if (!table) return;
+
+            try {
+                // Convert the visible HTML table directly back into an Excel Workbook using SheetJS
+                const workbook = XLSX.utils.table_to_book(table, { sheet: docData.sheetName || "Sheet1" });
+                
+                // Format the filename
+                let filename = docData.title || "downloaded-data.xlsx";
+                if (!filename.toLowerCase().endsWith('.xlsx')) {
+                    filename = filename.replace(/\.[^/.]+$/, "") + ".xlsx";
+                }
+                
+                // Trigger the browser file download
+                XLSX.writeFile(workbook, filename);
+                
+            } catch (err) {
+                console.error("Download failed:", err);
+                alert("Failed to generate Excel file for download.");
+            }
+        };
+
+        // --- SELECT ALL & COPY LOGIC ---
         window.copyDocumentText = async () => {
             const docData = allDocuments.find(d => d.id === activeDocId);
             if (!docData) return;
