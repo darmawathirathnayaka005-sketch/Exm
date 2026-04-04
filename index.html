@@ -45,6 +45,12 @@
         .excel-viewer tr:hover {
             background-color: #f8fafc;
         }
+
+        /* Highlight styling when text is selected */
+        .excel-viewer ::selection {
+            background-color: #bfdbfe; /* Tailwind blue-200 */
+            color: #1e3a8a; /* Tailwind blue-900 */
+        }
         
         /* Hide scrollbar for a cleaner look overall, but keep it for the table */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -121,9 +127,9 @@
                     <p id="doc-date" class="text-xs text-slate-500">Uploaded Date</p>
                 </div>
                 
-                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm">
-                    <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                    <span id="copy-text">Copy Data</span>
+                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm shadow-sm active:scale-95">
+                    <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><line x1="9" y1="9" x2="10" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                    <span id="copy-text">Select & Copy</span>
                 </button>
             </div>
 
@@ -158,7 +164,6 @@
 
     <!-- Application Logic -->
     <script type="module">
-        // Import standard Firebase SDKs directly via browser modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
@@ -173,21 +178,17 @@
             appId: "1:666947238265:web:08b333509c4e2491c057a8"
         };
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Define the SHARED PUBLIC folder path so all devices see the same files
         const APP_ID = 'exm199-b8552-app';
         const PUBLIC_COLLECTION_PATH = ['artifacts', APP_ID, 'public', 'data', 'spreadsheets'];
 
-        // Application State
         let currentUser = null;
         let allDocuments = [];
         let activeDocId = null;
 
-        // Elements
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
         const docListEl = document.getElementById('doc-list');
@@ -195,11 +196,9 @@
         const uploadBtn = document.getElementById('upload-btn');
         const uploadText = document.getElementById('upload-text');
         const uploadError = document.getElementById('upload-error');
-        
         const emptyState = document.getElementById('empty-state');
         const viewerContainer = document.getElementById('viewer-container');
         
-        // 1. Authenticate User (Required by Firebase before reading data)
         signInAnonymously(auth).catch((error) => {
             console.error("Auth error:", error);
             statusText.innerText = "Connection failed";
@@ -215,7 +214,6 @@
             }
         });
 
-        // 2. Load Documents from PUBLIC Workspace
         function loadDocuments() {
             if (!currentUser) return;
             
@@ -223,7 +221,6 @@
             
             onSnapshot(docsRef, (snapshot) => {
                 allDocuments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // Sort by newest first
                 allDocuments.sort((a, b) => b.createdAt - a.createdAt);
                 
                 statusText.innerText = `Connected (${allDocuments.length} files)`;
@@ -231,7 +228,6 @@
                 
                 renderDocumentList();
                 
-                // If active doc was deleted remotely, reset view
                 if (activeDocId && !allDocuments.find(d => d.id === activeDocId)) {
                     viewDocument(null);
                 }
@@ -242,7 +238,6 @@
             });
         }
 
-        // 3. Render List in Sidebar
         function renderDocumentList() {
             if (allDocuments.length === 0) {
                 docListEl.innerHTML = `
@@ -274,7 +269,6 @@
             });
         }
 
-        // 4. Handle File Upload using SheetJS
         fileInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -295,14 +289,12 @@
                 reader.onload = async (e) => {
                     try {
                         const data = new Uint8Array(e.target.result);
-                        
-                        // Parse the workbook using SheetJS
                         const workbook = XLSX.read(data, { type: 'array' });
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
                         
-                        // Convert sheet to HTML table for viewing in the app
                         const htmlResult = XLSX.utils.sheet_to_html(worksheet);
+                        const tsvResult = XLSX.utils.sheet_to_csv(worksheet, { FS: "\t" });
 
                         const docsRef = collection(db, ...PUBLIC_COLLECTION_PATH);
                         
@@ -310,6 +302,7 @@
                             title: file.name,
                             sheetName: firstSheetName,
                             htmlContent: htmlResult,
+                            textContent: tsvResult,
                             createdAt: Date.now(),
                             size: file.size,
                             uploadedBy: currentUser.uid
@@ -343,7 +336,6 @@
             uploadBtn.disabled = false;
         }
 
-        // 5. View Document Logic
         window.viewDocument = (id) => {
             activeDocId = id;
             if (!id) {
@@ -368,7 +360,6 @@
             renderDocumentList();
         };
 
-        // 6. Delete Logic
         window.deleteDocument = async (id, e) => {
             e.stopPropagation();
             if (!currentUser) return;
@@ -381,51 +372,68 @@
             }
         };
 
-        // 7. COPY DATA LOGIC (FIXED FOR EXCEL)
-        // Instead of copying raw text, this creates a browser selection 
-        // over the rendered HTML table. Excel natively understands HTML 
-        // clipboards and will perfectly parse columns and rows without commas!
-        window.copyDocumentText = () => {
+        // --- NEW SELECT ALL & COPY LOGIC ---
+        window.copyDocumentText = async () => {
+            const docData = allDocuments.find(d => d.id === activeDocId);
+            if (!docData) return;
+
             const docContent = document.getElementById('doc-content');
-            
-            // Safety check: is there a table to copy?
             if (!docContent || docContent.innerHTML.trim() === '') return;
 
-            // Select the entire table element programmatically
+            // STEP 1: SELECT ALL (Ctrl + A)
+            // Visually highlight the table content on the screen
             const selection = window.getSelection();
             const range = document.createRange();
             range.selectNodeContents(docContent);
-            
-            // Clear old selections and apply ours
             selection.removeAllRanges();
             selection.addRange(range);
 
+            let success = false;
+
+            // STEP 2: COPY (Ctrl + C)
             try {
-                // Execute copy (Copies as Rich HTML table instead of plain text)
-                document.execCommand('copy');
+                // Since the text is physically highlighted on the screen, 
+                // this acts exactly like pressing Ctrl+C on the keyboard.
+                // Mobile browsers trust this much more because a physical element is selected.
+                success = document.execCommand('copy');
                 
-                // UI feedback
+                // Fallback to modern Clipboard API if execCommand fails
+                if (!success && navigator.clipboard && window.ClipboardItem) {
+                    const fullHtml = `<html><body>${docContent.innerHTML}</body></html>`;
+                    const htmlBlob = new Blob([fullHtml], { type: 'text/html' });
+                    const textBlob = new Blob([docData.textContent], { type: 'text/plain' });
+                    const clipboardItem = new ClipboardItem({
+                        'text/html': htmlBlob,
+                        'text/plain': textBlob
+                    });
+                    await navigator.clipboard.write([clipboardItem]);
+                    success = true;
+                }
+            } catch (err) {
+                console.error("Copy action failed", err);
+            }
+
+            // STEP 3: UI FEEDBACK
+            if (success) {
                 const btn = document.getElementById('copy-btn');
                 const text = document.getElementById('copy-text');
                 btn.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-200');
                 btn.classList.remove('bg-white', 'text-slate-700', 'border-slate-300');
-                text.innerText = "Copied Data!";
+                text.innerText = "Selected & Copied!";
                 
                 setTimeout(() => {
                     btn.classList.remove('bg-emerald-100', 'text-emerald-800', 'border-emerald-200');
                     btn.classList.add('bg-white', 'text-slate-700', 'border-slate-300');
-                    text.innerText = "Copy Data";
-                }, 2000);
-
-            } catch (err) {
-                alert('Failed to copy data. Your browser might block this action.');
-            } finally {
-                // Remove the blue highlighting from the screen after copying
-                selection.removeAllRanges();
+                    text.innerText = "Select & Copy";
+                }, 2500);
+                
+                // Note: We intentionally DO NOT clear the selection so the user can 
+                // visually see that everything was grabbed!
+            } else {
+                alert('Copy failed! Your mobile browser security settings might be blocking this action.');
             }
         };
 
-        // 8. Mobile Sidebar Controls
         const sidebar = document.getElementById('sidebar');
         const overlay = document.getElementById('mobile-overlay');
 
