@@ -24,7 +24,7 @@
             border-collapse: collapse; 
             width: max-content; 
             min-width: 100%;
-            font-size: 0.875rem; /* text-sm */
+            font-size: 0.875rem;
             background-color: white;
         }
         
@@ -33,6 +33,10 @@
             padding: 0.5rem 1rem; 
             white-space: nowrap; 
             color: #334155;
+            /* Ensure formulas don't wrap and break */
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         .excel-viewer th { 
@@ -52,7 +56,6 @@
             color: #1e3a8a; /* Tailwind blue-900 */
         }
         
-        /* Hide scrollbar for a cleaner look overall, but keep it for the table */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -68,23 +71,19 @@
     <div id="sidebar" class="fixed md:static inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col transition-transform duration-300 ease-in-out -translate-x-full md:translate-x-0">
         <div class="p-4 border-b border-slate-200 flex items-center justify-between">
             <div class="flex items-center gap-2 text-emerald-600 font-bold text-xl">
-                <!-- Spreadsheet Icon -->
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="15" y1="9" x2="15" y2="21"/></svg>
                 <span>ExcelReader</span>
             </div>
             <button class="md:hidden text-slate-400 hover:text-slate-600" onclick="toggleSidebar()">
-                <!-- X Icon -->
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
         </div>
 
         <div class="p-4">
             <button id="upload-btn" onclick="document.getElementById('file-input').click()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
-                <!-- Upload Icon -->
                 <svg id="upload-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 <span id="upload-text">Upload Spreadsheet</span>
             </button>
-            <!-- Accept Excel and CSV files -->
             <input type="file" id="file-input" accept=".xlsx, .xls, .csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv" class="hidden" />
             <p id="upload-error" class="text-red-500 text-xs mt-2 hidden items-start gap-1"></p>
         </div>
@@ -92,7 +91,6 @@
         <div class="flex-1 overflow-y-auto p-2">
             <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">Public Workspace</h3>
             <div id="doc-list" class="space-y-1">
-                <!-- Documents will be injected here -->
                 <div class="text-center p-4 text-slate-400 text-sm">
                     <p>Loading files...</p>
                 </div>
@@ -108,35 +106,35 @@
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col min-w-0 bg-slate-50 relative">
         
-        <!-- Mobile Header -->
         <div class="md:hidden flex items-center justify-between bg-white border-b border-slate-200 p-4 shrink-0 shadow-sm">
             <button onclick="toggleSidebar()" class="text-slate-600">
-                <!-- Menu Icon -->
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
             </button>
             <span id="mobile-title" class="font-semibold text-slate-800 truncate px-4">ExcelReader</span>
             <div class="w-6"></div>
         </div>
 
-        <!-- Viewer Container -->
         <div id="viewer-container" class="hidden flex-col h-full w-full">
-            <!-- Top Toolbar -->
             <div class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 shadow-sm z-10">
                 <div class="min-w-0 hidden md:block">
                     <h2 id="doc-title" class="text-lg font-semibold text-slate-800 truncate">Spreadsheet Title</h2>
                     <p id="doc-date" class="text-xs text-slate-500">Uploaded Date</p>
                 </div>
                 
-                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 shadow-sm shadow-sm active:scale-95">
+                <button id="copy-btn" onclick="copyDocumentText()" class="flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all ml-auto bg-emerald-600 text-white hover:bg-emerald-700 shadow-md active:scale-95">
                     <svg id="copy-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><line x1="9" y1="9" x2="10" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-                    <span id="copy-text">Select & Copy</span>
+                    <span id="copy-text">Select All & Copy</span>
                 </button>
             </div>
 
-            <!-- Spreadsheet Viewer Pane -->
             <div class="flex-1 overflow-y-auto p-4 sm:p-8 relative">
                 <div class="max-w-[100%] mx-auto bg-white border border-slate-200 shadow-sm rounded-xl p-4 sm:p-6 min-h-full flex flex-col">
-                    <p class="text-xs text-slate-400 mb-4 font-medium uppercase tracking-wider" id="sheet-info">Sheet 1</p>
+                    <div class="flex justify-between items-center mb-4">
+                        <p class="text-xs text-slate-400 font-medium uppercase tracking-wider" id="sheet-info">Sheet 1</p>
+                        <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-1 rounded border border-emerald-200 font-semibold">
+                            ƒx Formulas Preserved
+                        </span>
+                    </div>
                     <div class="excel-viewer-container flex-1">
                         <div id="doc-content" class="excel-viewer">
                             <!-- Table Content injected here -->
@@ -153,7 +151,7 @@
             </div>
             <h2 class="text-2xl font-bold text-slate-800 mb-2">Read Excel Data Online</h2>
             <p class="text-slate-500 max-w-md mb-8">
-                Upload `.xlsx` or `.csv` files from the sidebar to view grid data right here. This is a public workspace, so uploaded spreadsheets are shared.
+                Upload `.xlsx` files from the sidebar. <strong>Formulas are preserved!</strong> When you copy the data, pasting it into Excel will restore all your calculations.
             </p>
             <button onclick="document.getElementById('file-input').click()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-3 px-6 rounded-lg shadow-sm flex items-center gap-2 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -168,7 +166,6 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-        // Your Firebase Configuration
         const firebaseConfig = {
             apiKey: "AIzaSyCDBmQCU9NvlGIWgFJvuiRIXVPlHQDpxfw",
             authDomain: "exm199-b8552.firebaseapp.com",
@@ -269,6 +266,7 @@
             });
         }
 
+        // --- NEW: FORMULA EXTRACTION LOGIC ---
         fileInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file) return;
@@ -289,10 +287,29 @@
                 reader.onload = async (e) => {
                     try {
                         const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, { type: 'array' });
+                        
+                        // cellFormula: true ensures SheetJS grabs the hidden formulas
+                        const workbook = XLSX.read(data, { type: 'array', cellFormula: true });
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
                         
+                        // MAGIC TRICK: Loop through ALL cells. 
+                        // If a cell has a formula (cell.f), we overwrite its visible value 
+                        // to be "=[the formula]". 
+                        for (const cellAddress in worksheet) {
+                            // Ignore hidden properties that start with !
+                            if (cellAddress.startsWith('!')) continue; 
+                            
+                            const cell = worksheet[cellAddress];
+                            if (cell && cell.f) {
+                                // Extract the formula and prepend the = sign
+                                cell.v = "=" + cell.f;
+                                cell.t = "s"; // Mark it as a string
+                                delete cell.w; // Delete cached formatted text so it uses our new value
+                            }
+                        }
+
+                        // Now when we convert to HTML and TSV, the formulas are hardcoded into the output!
                         const htmlResult = XLSX.utils.sheet_to_html(worksheet);
                         const tsvResult = XLSX.utils.sheet_to_csv(worksheet, { FS: "\t" });
 
@@ -372,7 +389,6 @@
             }
         };
 
-        // --- NEW SELECT ALL & COPY LOGIC ---
         window.copyDocumentText = async () => {
             const docData = allDocuments.find(d => d.id === activeDocId);
             if (!docData) return;
@@ -380,8 +396,7 @@
             const docContent = document.getElementById('doc-content');
             if (!docContent || docContent.innerHTML.trim() === '') return;
 
-            // STEP 1: SELECT ALL (Ctrl + A)
-            // Visually highlight the table content on the screen
+            // STEP 1: SELECT ALL
             const selection = window.getSelection();
             const range = document.createRange();
             range.selectNodeContents(docContent);
@@ -390,14 +405,10 @@
 
             let success = false;
 
-            // STEP 2: COPY (Ctrl + C)
+            // STEP 2: COPY DATA (HTML format preferred so Columns stay strictly separated)
             try {
-                // Since the text is physically highlighted on the screen, 
-                // this acts exactly like pressing Ctrl+C on the keyboard.
-                // Mobile browsers trust this much more because a physical element is selected.
                 success = document.execCommand('copy');
                 
-                // Fallback to modern Clipboard API if execCommand fails
                 if (!success && navigator.clipboard && window.ClipboardItem) {
                     const fullHtml = `<html><body>${docContent.innerHTML}</body></html>`;
                     const htmlBlob = new Blob([fullHtml], { type: 'text/html' });
@@ -417,20 +428,17 @@
             if (success) {
                 const btn = document.getElementById('copy-btn');
                 const text = document.getElementById('copy-text');
-                btn.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-200');
-                btn.classList.remove('bg-white', 'text-slate-700', 'border-slate-300');
-                text.innerText = "Selected & Copied!";
+                btn.classList.add('bg-white', 'text-emerald-700', 'border', 'border-emerald-200');
+                btn.classList.remove('bg-emerald-600', 'text-white');
+                text.innerText = "All Copied! ✓";
                 
                 setTimeout(() => {
-                    btn.classList.remove('bg-emerald-100', 'text-emerald-800', 'border-emerald-200');
-                    btn.classList.add('bg-white', 'text-slate-700', 'border-slate-300');
-                    text.innerText = "Select & Copy";
+                    btn.classList.remove('bg-white', 'text-emerald-700', 'border', 'border-emerald-200');
+                    btn.classList.add('bg-emerald-600', 'text-white');
+                    text.innerText = "Select All & Copy";
                 }, 2500);
-                
-                // Note: We intentionally DO NOT clear the selection so the user can 
-                // visually see that everything was grabbed!
             } else {
-                alert('Copy failed! Your mobile browser security settings might be blocking this action.');
+                alert('Copy failed! Your browser security settings might be blocking this action.');
             }
         };
 
